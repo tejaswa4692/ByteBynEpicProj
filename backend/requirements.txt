@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+supabase
+requests
+python-dotenv
+packaging
+PyJWT
+bcrypt
