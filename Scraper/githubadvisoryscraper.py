@@ -39,14 +39,15 @@ data = res.json()
 seen = set()
 
 for adv in data["data"]["securityAdvisories"]["nodes"]:
+    npm_packages = set()
+
     for vuln in adv["vulnerabilities"]["nodes"]:
         pkg = vuln.get("package")
 
         if pkg and pkg.get("ecosystem", "").lower() == "npm":
-            key = (adv["ghsaId"], pkg["name"])
+            npm_packages.add(pkg["name"])
 
-            if key not in seen:
-                seen.add(key)
-                print(
-                    f"{adv['ghsaId']} | {adv['publishedAt']} | {pkg['name']}"
-                )
+    if npm_packages:
+        print(
+            f"{adv['ghsaId']} | {adv['publishedAt']} | {list(npm_packages)}"
+        )
