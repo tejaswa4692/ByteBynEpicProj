@@ -1,5 +1,8 @@
 import os
 import requests
+import zipfile
+import io
+import re
 from dotenv import load_dotenv
 from packaging.version import Version, InvalidVersion
 
@@ -31,7 +34,8 @@ def get_deps(repo_url):
         raise ValueError("package.json not found in this repo")
 
     pkg = res.json()
-    return pkg.get("dependencies", {}), owner, repo
+    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+    return deps, owner, repo, branch, path
 
 
 # ── OSV.dev ────────────────────────────────────────────────────────────────────
@@ -74,18 +78,24 @@ def fetch_github_advisories():
         data = res.json()["data"]["securityAdvisories"]
 
         for node in data["nodes"]:
+            pkgs = []
             for vuln in node["vulnerabilities"]["nodes"]:
                 pkg = vuln.get("package") or {}
-                if pkg.get("ecosystem", "").lower() != "npm":
-                    continue
-                results.append({
-                    "ghsa_id":      node["ghsaId"],
-                    "package_name": pkg.get("name"),
-                    "severity":     node.get("severity"),
-                    "cvss":         (node.get("cvss") or {}).get("score"),
-                    "summary":      node.get("summary"),
-                    "published_at": node.get("publishedAt"),
-                })
+                if pkg.get("ecosystem", "").lower() == "npm" and pkg.get("name"):
+                    if pkg["name"] not in pkgs:
+                        pkgs.append(pkg["name"])
+            
+            if not pkgs:
+                continue
+                
+            results.append({
+                "ghsa_id":      node["ghsaId"],
+                "package_name": ", ".join(pkgs),
+                "severity":     node.get("severity"),
+                "cvss":         (node.get("cvss") or {}).get("score"),
+                "summary":      node.get("summary"),
+                "published_at": node.get("publishedAt"),
+            })
 
         if not data["pageInfo"]["hasNextPage"]:
             break
@@ -129,8 +139,65 @@ def risk_score(cvss, severity, installed, affected):
 
 # ── full scan ──────────────────────────────────────────────────────────────────
 
+def enrich_with_codebase_analysis(owner, repo, branch, base_path, hits):
+    if not hits:
+        return hits
+
+    url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+    js_files = {}
+    try:
+        res = requests.get(url, timeout=15)
+        res.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(res.content)) as z:
+            for name in z.namelist():
+                if name.endswith((".js", ".jsx", ".ts", ".tsx")):
+                    js_files[name] = z.read(name).decode("utf-8", errors="ignore").splitlines()
+    except Exception:
+        pass
+
+    for h in hits:
+        pkg = h["package_name"]
+        summary = (h.get("summary") or "").lower()
+        
+        if "prototype pollution" in summary:
+            h["fix_suggestion"] = f"Remove deep merges using {pkg} or upgrade to a safe version."
+            h["risk_impact"] = "High (Prototype Pollution)"
+        elif "xss" in summary or "cross-site scripting" in summary:
+            h["fix_suggestion"] = f"Sanitize user input before passing to {pkg} or upgrade."
+            h["risk_impact"] = "Critical (XSS)"
+        elif "redos" in summary or "regular expression" in summary:
+            h["fix_suggestion"] = f"Implement request timeouts or upgrade {pkg} to avoid ReDoS."
+            h["risk_impact"] = "Medium (Denial of Service)"
+        else:
+            h["fix_suggestion"] = f"Upgrade {pkg} to the latest patched version."
+            h["risk_impact"] = "Moderate"
+
+        h["affected_file"] = None
+        h["line_number"] = None
+
+        pattern = re.compile(rf"['\"]{re.escape(pkg)}['\"]")
+        
+        found = False
+        for name, lines in js_files.items():
+            if found: break
+            parts = name.split("/", 1)
+            if len(parts) > 1:
+                rel_path = parts[1]
+                if base_path and not rel_path.startswith(base_path + "/"):
+                    continue
+                
+                for idx, line in enumerate(lines):
+                    if ("import " in line or "require(" in line) and pattern.search(line):
+                        h["affected_file"] = rel_path
+                        h["line_number"] = idx + 1
+                        found = True
+                        break
+
+    return hits
+
+
 def scan_repo(repo_url):
-    deps, owner, repo_name = get_deps(repo_url)
+    deps, owner, repo_name, branch, base_path = get_deps(repo_url)
     hits = []
 
     for pkg_name, version in deps.items():
@@ -162,4 +229,5 @@ def scan_repo(repo_url):
             })
 
     hits.sort(key=lambda h: h["risk_score"], reverse=True)
+    hits = enrich_with_codebase_analysis(owner, repo_name, branch, base_path, hits)
     return hits, owner, repo_name, len(deps)

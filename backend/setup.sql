@@ -26,7 +26,11 @@ create table if not exists scan_results (
     severity          text,
     cvss              float,
     risk_score        float,
-    summary           text
+    summary           text,
+    affected_file     text,
+    line_number       int,
+    fix_suggestion    text,
+    risk_impact       text
 );
 
 create table if not exists cve_cache (

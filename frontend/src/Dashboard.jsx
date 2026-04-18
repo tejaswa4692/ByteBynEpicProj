@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { scanRepo, getRepos, getReport, getCves, refreshCves } from './api'
 
 const badge = sev => {
@@ -9,23 +9,45 @@ const badge = sev => {
 const riskColor = s => s >= 8 ? 'text-red-400' : s >= 5 ? 'text-orange-400' : s >= 3 ? 'text-yellow-400' : 'text-green-400'
 
 function VulnTable({ rows }) {
+  const [expanded, setExpanded] = useState({})
+
+  const toggle = i => setExpanded(p => ({ ...p, [i]: !p[i] }))
+
   if (!rows?.length) return <p className="text-green-400 text-center py-8">✅ No vulnerabilities found!</p>
+  
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-800">
       <table className="w-full text-sm">
         <thead className="bg-gray-800 text-gray-400">
-          <tr>{['Package','Version','CVE / ID','Severity','Risk','Summary'].map(h => <th key={h} className="text-left px-4 py-3">{h}</th>)}</tr>
+          <tr>{['Package','Version','CVE / ID','Severity','Risk','Action'].map(h => <th key={h} className="text-left px-4 py-3">{h}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-t border-gray-800 hover:bg-gray-800/50">
-              <td className="px-4 py-3 font-mono">{r.package_name}</td>
-              <td className="px-4 py-3 font-mono text-gray-400">{r.installed_version}</td>
-              <td className="px-4 py-3 font-mono text-xs">{r.vuln_id || '—'}</td>
-              <td className="px-4 py-3">{badge(r.severity)}</td>
-              <td className={`px-4 py-3 font-bold ${riskColor(r.risk_score)}`}>{r.risk_score}/10</td>
-              <td className="px-4 py-3 text-gray-400 max-w-xs truncate">{r.summary || '—'}</td>
-            </tr>
+            <React.Fragment key={i}>
+              <tr onClick={() => toggle(i)} className="border-t border-gray-800 hover:bg-gray-800/50 cursor-pointer transition">
+                <td className="px-4 py-3 font-mono">{r.package_name}</td>
+                <td className="px-4 py-3 font-mono text-gray-400">{r.installed_version}</td>
+                <td className="px-4 py-3 font-mono text-xs">{r.vuln_id || '—'}</td>
+                <td className="px-4 py-3">{badge(r.severity)}</td>
+                <td className={`px-4 py-3 font-bold ${riskColor(r.risk_score)}`}>{r.risk_score}/10</td>
+                <td className="px-4 py-3 text-indigo-400 font-medium text-xs">{expanded[i] ? 'Hide' : 'Analyze'}</td>
+              </tr>
+              {expanded[i] && (
+                <tr className="bg-gray-900 border-b border-gray-800">
+                  <td colSpan={6} className="px-6 py-4">
+                    <div className="flex flex-col gap-2">
+                       <p className="text-gray-300 text-xs"><strong>Summary:</strong> {r.summary || 'No summary available.'}</p>
+                       <p className="text-gray-300 text-xs"><strong>Usage Found:</strong> {r.affected_file ? <span className="font-mono text-yellow-400">{r.affected_file}:{r.line_number}</span> : <span className="text-gray-500">Not found directly via AST imports</span>}</p>
+                       <p className="text-gray-300 text-xs"><strong>Impact:</strong> <span className="text-red-400 font-semibold">{r.risk_impact || 'Moderate'}</span></p>
+                       <div className="mt-2 p-3 bg-indigo-900/20 rounded-lg border border-indigo-500/30">
+                          <p className="text-indigo-300 font-semibold mb-1">🛠️ Actionable Fix</p>
+                          <p className="text-indigo-200 text-xs">{r.fix_suggestion || 'Update to the nearest safe patched version.'}</p>
+                       </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
           ))}
         </tbody>
       </table>
