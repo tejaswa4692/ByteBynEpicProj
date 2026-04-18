@@ -1,47 +1,21 @@
 import requests
-from dotenv import load_dotenv
-import os
-load_dotenv()
+from json import dumps
 
-GITHUB_TOKEN = str(os.getenv("GITHUB_TOKEN"))
+def fetch_vulns(package_name):
+    url = "https://api.osv.dev/v1/query"
 
-url = "https://api.github.com/graphql"
-
-query = """
-{
-  securityAdvisories(first: 10, orderBy: {field: PUBLISHED_AT, direction: DESC}) {
-    nodes {
-      ghsaId
-      summary
-      publishedAt
-      severity
-      identifiers {
-        type
-        value
-      }
-      vulnerabilities(first: 5) {
-        nodes {
-          package {
-            name
-            ecosystem
-          }
+    payload = {
+        "package": {
+            "name": package_name,
+            "ecosystem": "npm"
         }
-      }
     }
-  }
-}
-"""
 
-headers = {
-    "Authorization": f"Bearer {GITHUB_TOKEN}"
-}
+    response = requests.post(url, json=payload)
+    return response.json()
 
-res = requests.post(url, json={"query": query}, headers=headers)
-data = res.json()
 
-for adv in data["data"]["securityAdvisories"]["nodes"]:
-    for vuln in adv["vulnerabilities"]["nodes"]:
-        pkg = vuln.get("package")
-
-        if pkg:
-            print(pkg["ecosystem"])
+if __name__ == "__main__":
+    package_name = input("Enter the npm package name: ")
+    vulns = fetch_vulns(package_name)
+    print(dumps(vulns, indent=4))
