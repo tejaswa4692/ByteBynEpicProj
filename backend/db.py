@@ -8,30 +8,57 @@ sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # ── users ──────────────────────────────────────────────────────────────────────
 
-def get_user(username):
-    res = sb.table("users").select("*").eq("username", username).limit(1).execute()
+def get_user(user_id):
+    res = sb.table("users").select("*").eq("id", user_id).limit(1).execute()
     return res.data[0] if res.data else None
 
+def get_user_by_github(github_id):
+    res = sb.table("users").select("*").eq("github_id", github_id).limit(1).execute()
+    return res.data[0] if res.data else None
 
-def create_user(username, password_hash):
-    res = sb.table("users").insert({"username": username, "password_hash": password_hash}).execute()
-    return res.data[0]["id"]
+def upsert_user_github(github_id, username, github_token, avatar_url=None, email=None):
+    # Try to find existing
+    existing = get_user_by_github(github_id)
+    if existing:
+        res = sb.table("users").update({
+            "username": username,
+            "github_token": github_token,
+            "avatar_url": avatar_url,
+            "email": email
+        }).eq("id", existing["id"]).execute()
+        return existing["id"]
+    else:
+        res = sb.table("users").insert({
+            "github_id": github_id,
+            "username": username,
+            "github_token": github_token,
+            "avatar_url": avatar_url,
+            "email": email,
+            "password_hash": "github_oauth"
+        }).execute()
+        return res.data[0]["id"]
 
 
 # ── repositories ──────────────────────────────────────────────────────────────
 
-def upsert_repo(user_id, url, owner, repo_name):
+def upsert_repo(user_id, url, owner, repo_name, is_moderated=True):
     res = sb.table("repositories").upsert(
-        {"user_id": user_id, "url": url, "owner": owner, "repo_name": repo_name, "scanned_at": "now()"},
+        {"user_id": user_id, "url": url, "owner": owner, "repo_name": repo_name, "is_moderated": is_moderated, "scanned_at": "now()"},
         on_conflict="user_id,url"
     ).execute()
     return res.data[0]["id"]
 
+def set_repo_moderation(repo_id, user_id, is_moderated):
+    res = sb.table("repositories").update({"is_moderated": is_moderated}).eq("id", repo_id).eq("user_id", user_id).execute()
+    return res.data[0] if res.data else None
 
 def get_repos(user_id):
     res = sb.table("repositories").select("*").eq("user_id", user_id).order("scanned_at", desc=True).execute()
     return res.data
 
+def get_repo_by_name(user_id, repo_name):
+    res = sb.table("repositories").select("*").eq("user_id", user_id).eq("repo_name", repo_name).limit(1).execute()
+    return res.data[0] if res.data else None
 
 def get_repo_report(repo_id, user_id):
     repo_res = sb.table("repositories").select("*").eq("id", repo_id).eq("user_id", user_id).limit(1).execute()
@@ -39,6 +66,11 @@ def get_repo_report(repo_id, user_id):
         return None, []
     results_res = sb.table("scan_results").select("*").eq("repo_id", repo_id).order("risk_score", desc=True).execute()
     return repo_res.data[0], results_res.data
+
+
+def get_repos_by_url(url):
+    res = sb.table("repositories").select("*").eq("url", url).execute()
+    return res.data
 
 
 # ── scan results ──────────────────────────────────────────────────────────────

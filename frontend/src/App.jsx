@@ -5,9 +5,10 @@ import Dashboard from './Dashboard'
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token'))
 
-  const onLogin = (tok, user) => {
+  const onLogin = (tok, user, avatar) => {
     localStorage.setItem('token', tok)
     localStorage.setItem('username', user)
+    if (avatar) localStorage.setItem('avatar_url', avatar)
     setToken(tok)
   }
 

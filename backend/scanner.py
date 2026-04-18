@@ -16,22 +16,46 @@ SEVERITY_CVSS   = {"CRITICAL": 9.5, "HIGH": 7.5, "MEDIUM": 5.0, "LOW": 2.5}
 def get_deps(repo_url):
     parts = repo_url.strip("/").split("/")
     owner, repo = parts[3], parts[4]
-    branch, path = "main", ""
-    if "tree" in parts:
-        i = parts.index("tree")
-        branch, path = parts[i + 1], "/".join(parts[i + 2:])
-    elif "blob" in parts:
-        i = parts.index("blob")
-        branch, path = parts[i + 1], "/".join(parts[i + 2:])
 
-    file_path = f"{path}/package.json" if path else "package.json"
-    url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}"
-    res = requests.get(url, timeout=10)
-    if res.status_code != 200:
-        raise ValueError("package.json not found in this repo")
+    headers = {}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
-    pkg = res.json()
-    return pkg.get("dependencies", {}), owner, repo
+    # Get default branch
+    branch = "main"
+    r_repo = requests.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers, timeout=10)
+    if r_repo.status_code == 200:
+        branch = r_repo.json().get("default_branch", "main")
+
+    tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
+    r_tree = requests.get(tree_url, headers=headers, timeout=15)
+    
+    deps = {}
+    if r_tree.status_code == 200:
+        tree = r_tree.json().get("tree", [])
+        # Find all package.json files not in node_modules
+        pkg_paths = [item["path"] for item in tree if item["path"].endswith("package.json") and "node_modules" not in item["path"]]
+        
+        for path in pkg_paths:
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
+            r_pkg = requests.get(raw_url, timeout=10)
+            if r_pkg.status_code == 200:
+                try:
+                    pkg_data = r_pkg.json()
+                    new_deps = pkg_data.get("dependencies", {})
+                    for k, v in new_deps.items():
+                        deps[k] = v  # Overwrites duplicates, keeping one version
+                except Exception:
+                    pass
+    else:
+        # Fallback to direct raw request if tree API fails
+        file_path = "package.json"
+        url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{file_path}"
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            deps = res.json().get("dependencies", {})
+            
+    return deps, owner, repo
 
 
 # ── OSV.dev ────────────────────────────────────────────────────────────────────
