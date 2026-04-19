@@ -7,7 +7,7 @@ const pySnippet = `import requests
 import sys
 
 # RepodoGG CI/CD Security Check
-API_URL = "http://localhost:8000/scan"
+API_URL = "https://YOUR_BACKEND_URL/scan"
 REPO_URL = "YOUR_GITHUB_REPO_URL"
 
 def check_vulnerabilities():

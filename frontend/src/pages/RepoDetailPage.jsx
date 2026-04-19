@@ -452,7 +452,7 @@ export default function RepoDetailPage() {
               </div>
             </div>
             <a 
-              href={`http://localhost:8000/repos/${repoId}/certificate.pdf?token=${localStorage.getItem('token')}`} 
+              href={`${import.meta.env.VITE_API_URL ?? 'http://localhost:8000'}/repos/${repoId}/certificate.pdf?token=${localStorage.getItem('token')}`} 
               target="_blank" 
               rel="noreferrer"
             >
