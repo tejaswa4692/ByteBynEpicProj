@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { githubLogin } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,8 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const navigate = useNavigate()
 
+  const fetchRef = React.useRef(false)
+
   useEffect(() => {
     if (localStorage.getItem('token')) {
       navigate('/repos', { replace: true })
@@ -26,6 +28,9 @@ export default function LoginPage() {
     }
     const code = new URLSearchParams(window.location.search).get('code')
     if (!code) return
+    if (fetchRef.current) return
+    fetchRef.current = true
+
     setLoading(true)
     githubLogin(code)
       .then(data => {

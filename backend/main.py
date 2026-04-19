@@ -184,10 +184,17 @@ def list_github_repos(user: dict = Depends(get_current_user)):
     for gr in gh_repos:
         repo_name = gr["name"]
         db_repo = db_repo_map.get(repo_name)
-        is_moderated = db_repo["is_moderated"] if db_repo else False
+        
+        # Auto-save repo to the database if it doesn't exist
+        if not db_repo:
+            new_id = upsert_repo(int(user["sub"]), gr["html_url"], gr["owner"]["login"], repo_name, is_moderated=False)
+            db_repo = {"id": new_id, "is_moderated": False}
+            db_repo_map[repo_name] = db_repo
+            
+        is_moderated = db_repo["is_moderated"]
         
         result.append({
-            "id": db_repo["id"] if db_repo else None,
+            "id": db_repo["id"],
             "github_id": gr["id"],
             "repo_name": repo_name,
             "full_name": gr["full_name"],
