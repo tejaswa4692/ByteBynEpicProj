@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where node *)",
+      "Bash(where npm *)",
+      "Bash(powershell -Command \"node --version; npm --version\")"
+    ]
+  }
+}
