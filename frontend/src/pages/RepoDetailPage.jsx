@@ -19,7 +19,7 @@ import {
   BarChart, Bar, XAxis, YAxis
 } from 'recharts'
 import { jsPDF } from 'jspdf'
-import 'jspdf-autotable'
+import autoTable from 'jspdf-autotable'
 
 const LoadingSkeleton = () => (
   <div className="min-h-screen bg-background">
@@ -274,7 +274,7 @@ export default function RepoDetailPage() {
         return [34, 197, 94]
       }
 
-      doc.autoTable({
+      autoTable(doc, {
         startY: 66,
         head: [['#', 'Package', 'Version', 'Severity', 'Risk', 'CVE/ID', 'Location', 'Summary', 'Fix Suggestion']],
         body: tableData,

@@ -6,6 +6,7 @@ import CertifyPage from './pages/CertifyPage'
 import VerifyPage from './pages/VerifyPage'
 import ProtectedRoute from './components/ProtectedRoute'
 import DownloadsPage from './pages/DownloadsPage'
+import BlastRadiusPage from './pages/BlastRadiusPage'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
           <Route path="/repos" element={<ReposPage />} />
           <Route path="/repos/:owner/:name" element={<RepoDetailPage />} />
           <Route path="/certify" element={<CertifyPage />} />
+          <Route path="/blast-radius" element={<BlastRadiusPage />} />
           <Route path="/downloads" element={<DownloadsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

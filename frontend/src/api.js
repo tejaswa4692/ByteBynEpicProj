@@ -57,3 +57,25 @@ export const getCves = severity =>
 
 export const refreshCves = () =>
   fetch(`${API}/cves/refresh`, { method: 'POST', headers: authHeaders() }).then(parseJson)
+
+// Blast Radius
+export const resolveCve = (body) =>
+  fetch(`${API}/blast-radius/resolve-cve`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  }).then(parseJson)
+
+export const blastRadiusScan = (body) =>
+  fetch(`${API}/blast-radius/scan`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  }).then(parseJson)
+
+export const draftIssue = (body) =>
+  fetch(`${API}/blast-radius/draft-issue`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  }).then(parseJson)

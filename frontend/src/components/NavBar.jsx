@@ -6,6 +6,7 @@ import { Shield, LogOut } from 'lucide-react'
 const NAV_LINKS = [
   { to: '/repos', label: 'Repositories' },
   { to: '/certify', label: 'Certification' },
+  { to: '/blast-radius', label: 'Blast Radius' },
   { to: '/downloads', label: 'Downloads' },
   { to: '/verify', label: 'Verify' },
 ]

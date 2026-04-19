@@ -76,17 +76,22 @@ export default function ReposPage() {
     const newVal = !repo.is_moderated
     setTogglingId(repo.github_id)
     setRepos(prev => prev.map(r => r.github_id === repo.github_id ? { ...r, is_moderated: newVal } : r))
+    // Immediately mark as analysing so the UI never flashes 'Monitored'
+    if (newVal) {
+      setScanningIds(prev => new Set([...prev, repo.github_id]))
+    }
     try {
       const res = await moderateRepo(repo.url, repo.owner, repo.repo_name, newVal)
       if (res.repo_id) {
         await load()
         if (newVal) {
-          // Mark as scanning — background scan just started
-          setScanningIds(prev => new Set([...prev, repo.github_id]))
+          // Remove analysing state after background scan finishes (~30s)
           setTimeout(async () => {
             await load()
             setScanningIds(prev => { const s = new Set(prev); s.delete(repo.github_id); return s })
           }, 30000)
+        } else {
+          setScanningIds(prev => { const s = new Set(prev); s.delete(repo.github_id); return s })
         }
       }
     } finally {
@@ -253,7 +258,7 @@ export default function ReposPage() {
                       )}
                       {scanningIds.has(repo.github_id) ? (
                         <span className="flex items-center gap-1 text-xs font-medium text-primary">
-                          <Loader2 className="w-3 h-3 animate-spin" /> Scanning…
+                          <Loader2 className="w-3 h-3 animate-spin" /> Analysing…
                         </span>
                       ) : (
                         <span className={`text-xs font-medium ${repo.is_moderated ? 'text-green-400' : 'text-muted-foreground'}`}>

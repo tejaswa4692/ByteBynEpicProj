@@ -588,3 +588,333 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
             
     # Return 202 immediately to let GitHub know we received it
     return {"status": "accepted"}
+
+
+# ── blast-radius (ported from server/) ─────────────────────────────────────────
+
+import re
+import time
+from typing import Optional
+
+# -- helpers --
+
+def _br_fetch_with_retry(url, method="GET", json_body=None, retries=1):
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            if method == "POST":
+                r = requests.post(url, json=json_body, timeout=15)
+            else:
+                r = requests.get(url, timeout=15)
+            if r.status_code == 429 and attempt < retries:
+                time.sleep(1)
+                continue
+            return r
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(1)
+                continue
+            raise last_err
+    return None
+
+def _br_format_version_range(ranges):
+    if not ranges or not isinstance(ranges, list) or len(ranges) == 0:
+        return "all versions"
+    events = ranges[0].get("events", [])
+    introduced = None
+    fixed = None
+    last_affected = None
+    for e in events:
+        if "introduced" in e:
+            introduced = e["introduced"]
+        if "fixed" in e:
+            fixed = e["fixed"]
+        if "last_affected" in e:
+            last_affected = e["last_affected"]
+    if introduced and introduced != "0" and fixed:
+        return f">={introduced} <{fixed}"
+    if fixed:
+        return f"<{fixed}"
+    if last_affected:
+        return f"<={last_affected}"
+    if introduced and introduced != "0":
+        return f">={introduced}"
+    return "all versions"
+
+def _br_extract_severity(vuln):
+    for s in (vuln.get("severity") or []):
+        if "CVSS" in (s.get("type") or "").upper() and s.get("score"):
+            return s["score"]
+    db_sev = (vuln.get("database_specific") or {}).get("severity")
+    if db_sev:
+        return str(db_sev).upper()
+    return "UNKNOWN"
+
+def _br_parse_repo_url(url):
+    if not url:
+        return None
+    cleaned = re.sub(r"^git\+", "", url)
+    cleaned = re.sub(r"\.git$", "", cleaned)
+    match = re.search(r"github\.com[:/]+([^/]+)/([^/?#]+)", cleaned, re.IGNORECASE)
+    if not match:
+        return None
+    return {"owner": match.group(1), "repo": re.sub(r"\.git$", "", match.group(2))}
+
+
+# -- pydantic models --
+
+class BlastRadiusResolveBody(BaseModel):
+    cveId: Optional[str] = None
+    packageName: Optional[str] = None
+    version: Optional[str] = None
+
+class BlastRadiusScanBody(BaseModel):
+    packageName: str
+    version: Optional[str] = None
+    severity: Optional[str] = None
+
+class BlastRadiusDraftIssueBody(BaseModel):
+    vulnerablePackage: str
+    affectedVersions: Optional[str] = None
+    cveId: Optional[str] = None
+    dependentPackage: str
+    repoUrl: Optional[str] = None
+
+
+# -- endpoints --
+
+@app.post("/blast-radius/resolve-cve")
+def br_resolve_cve(body: BlastRadiusResolveBody):
+    """Resolve a CVE ID to the affected npm package, or echo user-supplied package."""
+    # Package-only mode
+    if not body.cveId and body.packageName:
+        return {
+            "package": body.packageName,
+            "affectedVersions": body.version or "all versions",
+            "severity": "USER-DEFINED",
+            "summary": "Scanning dependents for user-supplied package and version range.",
+            "cveId": "USER-INPUT",
+        }
+
+    if not body.cveId:
+        raise HTTPException(400, detail="Provide a cveId or packageName.")
+
+    clean_id = body.cveId.strip().upper()
+
+    # Step 1 — fetch from OSV
+    try:
+        osv_res = _br_fetch_with_retry(f"https://api.osv.dev/v1/vulns/{requests.utils.quote(clean_id)}")
+    except Exception as e:
+        raise HTTPException(502, detail=f"OSV API unreachable: {e}")
+
+    if osv_res.status_code == 404:
+        raise HTTPException(404, detail="CVE not found in OSV database")
+    if not osv_res.ok:
+        raise HTTPException(502, detail=f"OSV API error ({osv_res.status_code})")
+
+    data = osv_res.json()
+    all_ecosystems = set()
+
+    def find_npm_affected(vuln_data):
+        for a in (vuln_data.get("affected") or []):
+            eco = (a.get("package") or {}).get("ecosystem", "")
+            all_ecosystems.add(eco)
+            if eco == "npm":
+                return {"affected": a, "vulnData": vuln_data}
+        return None
+
+    # Step 2 — scan direct response
+    result = find_npm_affected(data)
+
+    # Step 3 — chase GHSA aliases
+    if not result:
+        aliases = data.get("aliases") or []
+        ghsa_aliases = [a for a in aliases if str(a).startswith("GHSA-")]
+        for alias in ghsa_aliases:
+            try:
+                alias_res = _br_fetch_with_retry(f"https://api.osv.dev/v1/vulns/{requests.utils.quote(alias)}")
+                if not alias_res.ok:
+                    continue
+                alias_data = alias_res.json()
+                result = find_npm_affected(alias_data)
+                if result:
+                    break
+            except Exception:
+                continue
+
+    # Step 4 — no npm entry
+    if not result:
+        eco_list = ", ".join(all_ecosystems) if all_ecosystems else "none"
+        raise HTTPException(404, detail=f"CVE exists but does not affect any npm package. Ecosystems found: {eco_list}")
+
+    # Step 5 — extract fields
+    affected = result["affected"]
+    vuln_data = result["vulnData"]
+    pkg_name = affected["package"]["name"]
+    version_range = _br_format_version_range(affected.get("ranges"))
+    severity = _br_extract_severity(vuln_data)
+    summary = vuln_data.get("summary") or ""
+    if not summary:
+        details = vuln_data.get("details") or ""
+        summary = details.split("\n")[0][:240] if details else "See CVE details"
+
+    return {
+        "package": pkg_name,
+        "affectedVersions": version_range,
+        "severity": str(severity),
+        "summary": summary,
+        "cveId": clean_id,
+    }
+
+
+@app.post("/blast-radius/scan")
+def br_blast_radius(body: BlastRadiusScanBody):
+    """Return downstream dependents affected by a vulnerable package (demo data)."""
+    if not body.packageName:
+        raise HTTPException(400, detail="Missing packageName")
+
+    sev = body.severity or "HIGH"
+
+    def e(name, version, dependent_count, org):
+        return {
+            "name": name,
+            "version": version,
+            "repoUrl": f"https://github.com/{org}/{name}",
+            "dependentCount": dependent_count,
+            "severity": sev,
+        }
+
+    DEMO_DATA = {
+        "lodash": [
+            e("express-validator", "7.0.1", 15320, "express-validator"),
+            e("react-scripts", "5.0.1", 12450, "facebook"),
+            e("webpack", "5.91.0", 11204, "webpack"),
+            e("babel-loader", "9.1.3", 8923, "babel"),
+            e("eslint-config-airbnb", "19.0.4", 7841, "airbnb"),
+            e("gulp", "4.0.2", 6532, "gulpjs"),
+            e("yeoman-generator", "7.1.0", 5190, "yeoman"),
+            e("grunt", "1.6.1", 4876, "gruntjs"),
+            e("karma", "6.4.3", 4310, "karma-runner"),
+            e("nodemon", "3.1.0", 3952, "remy"),
+            e("pm2", "5.3.1", 3641, "Unitech"),
+            e("jest", "29.7.0", 3287, "jestjs"),
+            e("mocha", "10.4.0", 2847, "mochajs"),
+            e("chai", "5.1.0", 2614, "chaijs"),
+            e("sinon", "17.0.1", 2398, "sinonjs"),
+            e("commander", "12.0.0", 2105, "tj"),
+            e("inquirer", "9.2.15", 1843, "SBoudrias"),
+            e("ora", "8.0.1", 1527, "sindresorhus"),
+            e("chalk", "5.3.0", 1390, "chalk"),
+            e("debug", "4.3.4", 1204, "debug-js"),
+        ],
+        "braces": [
+            e("micromatch", "4.0.5", 18740, "micromatch"),
+            e("chokidar", "3.6.0", 16215, "paulmillr"),
+            e("anymatch", "3.1.3", 12580, "micromatch"),
+            e("glob-parent", "6.0.2", 10930, "gulpjs"),
+            e("readdirp", "3.6.0", 9475, "paulmillr"),
+            e("fast-glob", "3.3.2", 8310, "mrmlnc"),
+            e("globby", "14.0.1", 7126, "sindresorhus"),
+            e("watchpack", "2.4.1", 6248, "webpack"),
+            e("webpack-dev-server", "5.0.4", 5590, "webpack"),
+            e("nodemon", "3.1.0", 4817, "remy"),
+            e("rollup", "4.14.1", 3942, "rollup"),
+            e("vite", "5.2.8", 3510, "vitejs"),
+            e("jest", "29.7.0", 2976, "jestjs"),
+            e("@babel/core", "7.24.4", 2430, "babel"),
+            e("postcss", "8.4.38", 1895, "postcss"),
+        ],
+        "semver": [
+            e("npm", "10.5.0", 24310, "npm"),
+            e("yarn", "1.22.22", 19870, "yarnpkg"),
+            e("eslint", "9.1.0", 17540, "eslint"),
+            e("typescript", "5.4.5", 15280, "microsoft"),
+            e("webpack", "5.91.0", 13420, "webpack"),
+            e("lerna", "8.1.2", 10950, "lerna"),
+            e("@babel/core", "7.24.4", 9310, "babel"),
+            e("rollup", "4.14.1", 7680, "rollup"),
+            e("create-react-app", "5.0.1", 6240, "facebook"),
+            e("nx", "18.2.4", 5470, "nrwl"),
+            e("storybook", "8.0.8", 4310, "storybookjs"),
+            e("jest", "29.7.0", 3850, "jestjs"),
+            e("prettier", "3.2.5", 2940, "prettier"),
+            e("husky", "9.0.11", 2180, "typicode"),
+            e("standard-version", "9.5.0", 1625, "conventional-changelog"),
+        ],
+    }
+
+    GENERIC_FALLBACK = [
+        e("webpack", "5.91.0", 8420, "webpack"),
+        e("eslint", "9.1.0", 7310, "eslint"),
+        e("jest", "29.7.0", 5840, "jestjs"),
+        e("rollup", "4.14.1", 4520, "rollup"),
+        e("vite", "5.2.8", 3890, "vitejs"),
+        e("@babel/core", "7.24.4", 3240, "babel"),
+        e("typescript", "5.4.5", 2780, "microsoft"),
+        e("nodemon", "3.1.0", 2150, "remy"),
+        e("prettier", "3.2.5", 1640, "prettier"),
+        e("husky", "9.0.11", 1120, "typicode"),
+    ]
+
+    key = body.packageName.lower()
+    dependents = sorted(
+        DEMO_DATA.get(key, GENERIC_FALLBACK),
+        key=lambda d: d["dependentCount"],
+        reverse=True,
+    )
+
+    return {
+        "dependents": dependents,
+        "totalCount": sum(d["dependentCount"] for d in dependents),
+        "shownCount": len(dependents),
+    }
+
+
+@app.post("/blast-radius/draft-issue")
+def br_draft_issue(body: BlastRadiusDraftIssueBody):
+    """Generate a GitHub issue title + body for notifying downstream maintainers."""
+    if not body.vulnerablePackage or not body.dependentPackage:
+        raise HTTPException(400, detail="Missing vulnerablePackage or dependentPackage")
+
+    advisory_url = (
+        f"https://osv.dev/vulnerability/{requests.utils.quote(body.cveId)}"
+        if body.cveId and body.cveId != "USER-INPUT"
+        else None
+    )
+
+    title = f"Security: Update `{body.vulnerablePackage}` to patched version ({body.cveId or 'advisory'})"
+
+    body_text = "\n".join([
+        f"Hi maintainers of `{body.dependentPackage}`,",
+        "",
+        f"An automated ecosystem scan flagged that `{body.dependentPackage}` depends on `{body.vulnerablePackage}` in a version range affected by **{body.cveId or 'a published advisory'}** (`{body.affectedVersions or 'see advisory'}`). ",
+        "",
+        "**Details**",
+        f"- Vulnerable package: `{body.vulnerablePackage}`",
+        f"- Affected range: `{body.affectedVersions or 'see advisory'}`",
+        f"- Advisory: {advisory_url}" if advisory_url else "- Advisory: (user-supplied)",
+        "",
+        "**Suggested action**",
+        f"Please consider bumping `{body.vulnerablePackage}` to a patched version, or pinning an override/resolution in the lockfile if a direct update is not yet feasible.",
+        "",
+        f"This issue was opened via an automated scan that walks the dependency graph outward from a published CVE. Happy to close it if the exposure has already been addressed, or if you'd prefer patches come via PR — thanks for maintaining `{body.dependentPackage}`.",
+    ])
+
+    parsed = _br_parse_repo_url(body.repoUrl)
+
+    if not parsed:
+        return {
+            "issueUrl": None,
+            "copyableText": f"{title}\n\n{body_text}",
+            "title": title,
+            "body": body_text,
+        }
+
+    issue_url = (
+        f"https://github.com/{parsed['owner']}/{parsed['repo']}/issues/new"
+        f"?title={requests.utils.quote(title)}"
+        f"&body={requests.utils.quote(body_text)}"
+    )
+
+    return {"issueUrl": issue_url, "title": title, "body": body_text}
