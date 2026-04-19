@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx shadcn@latest add button card badge table dialog switch tabs avatar separator skeleton select progress input --yes)",
+      "Bash(npx shadcn@latest add button card badge table dialog switch tabs avatar separator skeleton select progress input --yes --legacy-peer-deps)"
+    ]
+  }
+}
