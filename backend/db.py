@@ -62,10 +62,13 @@ def get_repo_by_name(user_id, repo_name):
 
 def set_repo_ipfs_hash(repo_id, ipfs_hash, cert_pdf: bytes = None):
     data = {"ipfs_hash": ipfs_hash}
-    if cert_pdf is not None:
-        import base64
-        data["cert_pdf"] = base64.b64encode(cert_pdf).decode()
     sb.table("hx_repositories").update(data).eq("id", repo_id).execute()
+
+def verify_certificate(cert_id: str):
+    """Public lookup — finds a repo by its ipfs_hash (Certificate ID). No user auth needed."""
+    res = sb.table("hx_repositories").select("id,owner,repo_name,scanned_at,ipfs_hash,url").eq("ipfs_hash", cert_id).limit(1).execute()
+    return res.data[0] if res.data else None
+
 
 def get_repo_report(repo_id, user_id):
     repo_res = sb.table("hx_repositories").select("*").eq("id", repo_id).eq("user_id", user_id).limit(1).execute()

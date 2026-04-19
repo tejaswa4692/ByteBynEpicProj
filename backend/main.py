@@ -4,12 +4,12 @@ import bcrypt
 import hmac
 import hashlib
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, HTTPException, Header, Depends, Request, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Header, Depends, Request, BackgroundTasks, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from db import (upsert_user_github, get_user, upsert_repo, get_repos,
-                get_repo_report, save_scan_results, upsert_cves, get_all_cves, get_repos_by_url, set_repo_moderation, get_repo_by_name, set_repo_ipfs_hash)
+                get_repo_report, save_scan_results, upsert_cves, get_all_cves, get_repos_by_url, set_repo_moderation, get_repo_by_name, set_repo_ipfs_hash, verify_certificate)
 from scanner import scan_repo, fetch_github_advisories
 import requests
 import io
@@ -401,11 +401,14 @@ def download_certificate(repo_id: int, token: str = None, authorization: str = H
     repo, _ = get_repo_report(repo_id, user_id)
     if not repo:
         raise HTTPException(404, detail="Repo not found")
-    if not repo.get("ipfs_hash"):
-        raise HTTPException(404, detail="No certificate generated yet. Click 'Mint Certificate' first.")
+    cert_hash = repo.get('ipfs_hash', '')
 
     # Regenerate PDF on-the-fly — no DB blob column needed
     pdf = FPDF()
+    # Embed cert ID in PDF metadata — always stored as plain text in raw bytes
+    pdf.set_subject(f"CERT_ID:{cert_hash}")
+    pdf.set_keywords(cert_hash)
+    pdf.set_author("RepodoGG Automated AST Scanner")
     pdf.add_page()
     pdf.set_font("Helvetica", style="B", size=24)
     pdf.set_text_color(40, 40, 40)
@@ -427,7 +430,9 @@ def download_certificate(repo_id: int, token: str = None, authorization: str = H
     pdf.ln(10)
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.set_text_color(79, 70, 229)
-    pdf.multi_cell(180, 8, txt=f"Certificate ID: {repo.get('ipfs_hash', '')}", align='C')
+    pdf.cell(200, 8, txt=f"Certificate ID:", ln=True, align='C')
+    pdf.set_font("Helvetica", size=9)
+    pdf.cell(200, 8, txt=cert_hash, ln=True, align='C')
     pdf.ln(5)
     pdf.set_font("Helvetica", style="I", size=9)
     pdf.set_text_color(150, 150, 150)
@@ -439,6 +444,73 @@ def download_certificate(repo_id: int, token: str = None, authorization: str = H
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=RepodoGG_Cert_{repo.get('repo_name')}.pdf"}
     )
+
+
+# ── public certificate verification ──────────────────────────────────────────
+
+@app.get("/verify")
+def verify_cert(cert_id: str):
+    """Public endpoint — no auth required. Verifies a certificate ID against the database."""
+    if not cert_id or len(cert_id) < 8:
+        raise HTTPException(400, detail="Invalid certificate ID.")
+    repo = verify_certificate(cert_id)
+    if not repo:
+        return {"valid": False, "message": "Certificate not found. This certificate may be invalid or was not issued by RepodoGG."}
+    return {
+        "valid": True,
+        "owner": repo["owner"],
+        "repo_name": repo["repo_name"],
+        "repo_url": repo.get("url", f"https://github.com/{repo['owner']}/{repo['repo_name']}"),
+        "certified_at": repo.get("scanned_at"),
+        "cert_id": repo["ipfs_hash"],
+        "message": f"✅ Verified! {repo['owner']}/{repo['repo_name']} passed zero-vulnerability audit."
+    }
+
+@app.post("/verify-pdf")
+async def verify_pdf_upload(file: UploadFile):
+    """Public endpoint — accepts a PDF upload, extracts Certificate ID from metadata, and verifies it."""
+    import re
+    raw = await file.read()
+    text = raw.decode("latin-1", errors="ignore")
+    
+    # Try metadata fields first (most reliable — always plain text in PDF header)
+    cert_id = None
+    meta_match = re.search(r"CERT_ID:([A-Za-z0-9_\-]{10,})", text)
+    if meta_match:
+        cert_id = meta_match.group(1).strip()
+    
+    if not cert_id:
+        # Try /Keywords field in PDF metadata
+        kw_match = re.search(r"/Keywords\s*\(([A-Za-z0-9_\-]{10,})\)", text)
+        if kw_match:
+            cert_id = kw_match.group(1).strip()
+
+    if not cert_id:
+        # Fallback: scan all readable tokens of sufficient length
+        tokens = re.findall(r"[A-Za-z0-9]{40,}", text)
+        for t in tokens:
+            if t.startswith("bafkrei") or t.startswith("hx"):
+                cert_id = t
+                break
+
+    print(f"[verify-pdf] Extracted cert_id: {cert_id}")
+
+    if not cert_id:
+        return {"valid": False, "message": "Could not extract a Certificate ID from this PDF. Make sure it was issued by RepodoGG, or paste the ID manually."}
+    
+    repo = verify_certificate(cert_id)
+    if not repo:
+        return {"valid": False, "extracted_id": cert_id, "message": "Certificate ID found but not recognised. This certificate may be tampered or was not issued by RepodoGG."}
+    return {
+        "valid": True,
+        "extracted_id": cert_id,
+        "owner": repo["owner"],
+        "repo_name": repo["repo_name"],
+        "repo_url": repo.get("url", f"https://github.com/{repo['owner']}/{repo['repo_name']}"),
+        "certified_at": repo.get("scanned_at"),
+        "cert_id": repo["ipfs_hash"],
+        "message": f"✅ Verified! {repo['owner']}/{repo['repo_name']} passed zero-vulnerability audit."
+    }
 
 
 # ── cves ───────────────────────────────────────────────────────────────────────

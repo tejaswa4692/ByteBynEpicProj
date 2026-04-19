@@ -7,6 +7,7 @@ const NAV_LINKS = [
   { to: '/repos', label: 'Repositories' },
   { to: '/certify', label: 'Certification' },
   { to: '/downloads', label: 'Downloads' },
+  { to: '/verify', label: 'Verify' },
 ]
 
 export default function NavBar() {

@@ -3,8 +3,8 @@ import LoginPage from './pages/LoginPage'
 import ReposPage from './pages/ReposPage'
 import RepoDetailPage from './pages/RepoDetailPage'
 import CertifyPage from './pages/CertifyPage'
+import VerifyPage from './pages/VerifyPage'
 import ProtectedRoute from './components/ProtectedRoute'
-
 import DownloadsPage from './pages/DownloadsPage'
 
 export default function App() {
@@ -12,6 +12,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<LoginPage />} />
+        <Route path="/verify" element={<VerifyPage />} />
         <Route element={<ProtectedRoute />}>
           <Route path="/repos" element={<ReposPage />} />
           <Route path="/repos/:owner/:name" element={<RepoDetailPage />} />

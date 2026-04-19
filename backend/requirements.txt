@@ -7,3 +7,4 @@ packaging
 PyJWT
 bcrypt
 fpdf2
+python-multipart
