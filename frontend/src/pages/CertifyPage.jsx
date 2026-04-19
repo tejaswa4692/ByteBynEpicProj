@@ -85,7 +85,7 @@ export default function CertifyPage() {
       version: 1,
       metadata: {
         timestamp: new Date().toISOString(),
-        tools: [{ vendor: 'HackHelix', name: 'HackHelix Scanner', version: '1.0.0' }],
+        tools: [{ vendor: 'RepodoGG', name: 'RepodoGG Scanner', version: '1.0.0' }],
         component: {
           type: 'library',
           name: selectedRepo ? `${selectedRepo.owner}/${selectedRepo.repo_name}` : 'unknown',
@@ -200,7 +200,7 @@ export default function CertifyPage() {
                       </div>
                       <p className="text-xs text-muted-foreground leading-relaxed">
                         {isCertifiable
-                          ? 'This project meets HackHelix security standards.'
+                          ? 'This project meets RepodoGG security standards.'
                           : 'Resolve critical issues to qualify for certification.'
                         }
                       </p>
@@ -335,11 +335,11 @@ export default function CertifyPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Award className="w-5 h-5 text-primary" /> HackHelix Certification
+              <Award className="w-5 h-5 text-primary" /> RepodoGG Certification
             </DialogTitle>
             <DialogDescription>
               {isCertifiable
-                ? 'Your project meets the requirements for HackHelix security certification.'
+                ? 'Your project meets the requirements for RepodoGG security certification.'
                 : 'Your project does not currently meet certification requirements.'}
             </DialogDescription>
           </DialogHeader>

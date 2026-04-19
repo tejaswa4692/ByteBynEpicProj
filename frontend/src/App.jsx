@@ -5,6 +5,8 @@ import RepoDetailPage from './pages/RepoDetailPage'
 import CertifyPage from './pages/CertifyPage'
 import ProtectedRoute from './components/ProtectedRoute'
 
+import DownloadsPage from './pages/DownloadsPage'
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -14,6 +16,7 @@ export default function App() {
           <Route path="/repos" element={<ReposPage />} />
           <Route path="/repos/:owner/:name" element={<RepoDetailPage />} />
           <Route path="/certify" element={<CertifyPage />} />
+          <Route path="/downloads" element={<DownloadsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

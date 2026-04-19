@@ -45,6 +45,12 @@ export const scanRepo = url =>
     body: JSON.stringify({ repo_url: url }),
   }).then(parseJson)
 
+export const certifyRepo = id =>
+  fetch(`${API}/repos/${id}/certify`, {
+    method: 'POST',
+    headers: authHeaders()
+  }).then(parseJson)
+
 // CVEs
 export const getCves = severity =>
   fetch(`${API}/cves${severity ? `?severity=${severity}` : ''}`, { headers: authHeaders() }).then(parseJson)

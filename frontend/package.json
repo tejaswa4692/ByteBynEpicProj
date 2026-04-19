@@ -1,5 +1,5 @@
 {
-  "name": "hackhelix",
+  "name": "repodogg",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,8 @@
     "@tailwindcss/vite": "^4.2.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
     "lucide-react": "^1.8.0",
     "radix-ui": "^1.4.3",
     "react": "^18.3.0",

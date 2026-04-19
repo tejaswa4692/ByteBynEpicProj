@@ -67,7 +67,7 @@ export default function LoginPage() {
             </div>
           </div>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">HackHelix</h1>
+            <h1 className="text-3xl font-black tracking-tight">repodogg</h1>
             <p className="text-muted-foreground text-sm mt-1.5">
               Secure your dependencies. Automatically.
             </p>

@@ -6,6 +6,7 @@ import { Shield, LogOut } from 'lucide-react'
 const NAV_LINKS = [
   { to: '/repos', label: 'Repositories' },
   { to: '/certify', label: 'Certification' },
+  { to: '/downloads', label: 'Downloads' },
 ]
 
 export default function NavBar() {
@@ -27,7 +28,7 @@ export default function NavBar() {
             <div className="p-1.5 rounded-lg bg-primary/15 border border-primary/25">
               <Shield className="w-4 h-4 text-primary" />
             </div>
-            HackHelix
+            <span className="font-black tracking-tight">repodogg</span>
           </Link>
           <div className="flex items-center gap-1">
             {NAV_LINKS.map(({ to, label }) => {

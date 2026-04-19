@@ -6,3 +6,4 @@ python-dotenv
 packaging
 PyJWT
 bcrypt
+fpdf2

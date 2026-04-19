@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useLocation, Link } from 'react-router-dom'
-import { getGithubRepos, getReport, getRepos, scanRepo } from '@/api'
+import { getGithubRepos, getReport, getRepos, scanRepo, certifyRepo, moderateRepo } from '@/api'
 import NavBar from '@/components/NavBar'
 import SeverityBadge from '@/components/SeverityBadge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,158 +12,80 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   ChevronRight, ExternalLink, GitPullRequest, AlertTriangle,
   Shield, Clock, Package2, Zap, RefreshCw, Loader2, ScanLine,
-  FolderOpen, FileText, CheckCircle2, XCircle, AlertCircle
+  FolderOpen, FileText, CheckCircle2, XCircle, AlertCircle, FileDown, Award
 } from 'lucide-react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis
 } from 'recharts'
+import { jsPDF } from 'jspdf'
+import 'jspdf-autotable'
 
-const SEV_COLORS = { CRITICAL: '#ef4444', HIGH: '#f97316', MEDIUM: '#eab308', LOW: '#3b82f6' }
+const LoadingSkeleton = () => (
+  <div className="min-h-screen bg-background">
+    <NavBar />
+    <main className="max-w-6xl mx-auto px-6 py-8 space-y-8">
+      <Skeleton className="h-8 w-64" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    </main>
+  </div>
+)
 
-const riskColor = score =>
-  score >= 8 ? 'text-red-400' : score >= 5 ? 'text-orange-400' : score >= 3 ? 'text-yellow-400' : 'text-green-400'
+const SEV_COLORS = {
+  CRITICAL: '#ef4444',
+  HIGH: '#f97316',
+  MEDIUM: '#eab308',
+  LOW: '#22c55e',
+}
 
 const chartTooltipStyle = {
-  backgroundColor: 'oklch(0.12 0.01 265)',
-  borderColor: 'oklch(1 0 0 / 8%)',
+  backgroundColor: 'oklch(0.2 0 0)',
+  border: '1px solid oklch(1 0 0 / 10%)',
   borderRadius: '8px',
-  color: '#f5f5f5',
   fontSize: '12px',
 }
 
-// Infer the manifest path from a vuln's affected_file if source_manifest is absent
-function inferManifest(v) {
-  if (v.source_manifest) return v.source_manifest
-  if (!v.affected_file) return 'package.json'
-  const parts = v.affected_file.split('/')
-  return parts.length > 1 ? `${parts[0]}/package.json` : 'package.json'
-}
+const riskColor = score =>
+  score >= 8 ? 'text-red-400' : score >= 5 ? 'text-orange-400' : 'text-green-400'
 
-function DependencyTree({ vulns, manifests }) {
-  const allManifests = new Set(manifests?.length ? manifests : [])
-  vulns.forEach(v => allManifests.add(inferManifest(v)))
-  if (allManifests.size === 0) return null
+const inferManifest = v => v?.source_manifest || v?.affected_file?.split('/')?.[0] || null
 
-  const counts = {}
-  allManifests.forEach(m => {
-    counts[m] = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, total: 0 }
-  })
+const DependencyTree = ({ vulns, manifests }) => {
+  const groups = {}
   vulns.forEach(v => {
-    const key = inferManifest(v)
-    if (!counts[key]) counts[key] = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, total: 0 }
-    if (v.severity && v.severity in counts[key]) counts[key][v.severity]++
-    counts[key].total++
+    const key = v.source_manifest || 'root'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(v)
   })
-
-  const entries = Object.entries(counts).sort((a, b) => b[1].total - a[1].total)
-
-  const borderFor = (c) => {
-    if (c.total === 0) return 'border-green-500/25'
-    if (c.CRITICAL > 0) return 'border-red-500/35'
-    if (c.HIGH > 0) return 'border-orange-500/35'
-    if (c.MEDIUM > 0) return 'border-yellow-500/35'
-    return 'border-blue-500/35'
-  }
-
-  const bgFor = (c) => {
-    if (c.total === 0) return 'bg-green-500/5'
-    if (c.CRITICAL > 0) return 'bg-red-500/5'
-    if (c.HIGH > 0) return 'bg-orange-500/5'
-    if (c.MEDIUM > 0) return 'bg-yellow-500/5'
-    return 'bg-blue-500/5'
-  }
-
+  const keys = [...new Set([...Object.keys(groups), ...(manifests || [])])]
+  if (!keys.length) return null
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-          <FolderOpen className="w-4 h-4" />
-          Dependency Tree — {entries.length} manifest{entries.length !== 1 ? 's' : ''} scanned
+          <FolderOpen className="w-4 h-4" /> Dependency Tree
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2">
-        {entries.map(([path, c]) => {
-          const dir = path.includes('/') ? path.split('/').slice(0, -1).join('/') : null
-          const isClean = c.total === 0
-          return (
-            <div
-              key={path}
-              className={`flex items-center gap-3 px-4 py-3 rounded-lg border ${borderFor(c)} ${bgFor(c)}`}
-            >
-              {/* folder + file */}
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                {dir ? (
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <FolderOpen className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <span className="text-xs text-muted-foreground font-mono">{dir}/</span>
-                    <ChevronRight className="w-3 h-3 text-muted-foreground/40 shrink-0" />
-                    <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-xs font-mono font-medium">package.json</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-xs font-mono font-medium">package.json</span>
-                    <span className="text-xs text-muted-foreground">(root)</span>
-                  </div>
-                )}
+      <CardContent className="space-y-3">
+        {keys.map(k => (
+          <div key={k} className="p-3 rounded-lg bg-secondary/50 border border-border">
+            <p className="font-mono text-xs text-primary mb-2 flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5" /> {k}
+            </p>
+            {(groups[k] || []).map((v, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground pl-4 py-0.5">
+                <span className="font-mono text-blue-300">{v.package_name}@{v.installed_version}</span>
+                <span style={{ color: SEV_COLORS[v.severity] ?? '#71717a' }}>{v.severity}</span>
               </div>
-
-              {/* severity pills */}
-              {isClean ? (
-                <div className="flex items-center gap-1.5 text-green-400 text-xs font-medium shrink-0">
-                  <CheckCircle2 className="w-4 h-4" /> Clean
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {c.CRITICAL > 0 && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">
-                      {c.CRITICAL} CRITICAL
-                    </span>
-                  )}
-                  {c.HIGH > 0 && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                      {c.HIGH} HIGH
-                    </span>
-                  )}
-                  {c.MEDIUM > 0 && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-                      {c.MEDIUM} MED
-                    </span>
-                  )}
-                  {c.LOW > 0 && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                      {c.LOW} LOW
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
+            ))}
+          </div>
+        ))}
       </CardContent>
     </Card>
-  )
-}
-
-function LoadingSkeleton() {
-  return (
-    <div className="min-h-screen bg-background">
-      <NavBar />
-      <main className="max-w-6xl mx-auto px-6 py-8 space-y-6">
-        <Skeleton className="h-5 w-56" />
-        <Skeleton className="h-9 w-72" />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Skeleton className="h-72 rounded-xl" />
-          <Skeleton className="h-72 rounded-xl" />
-        </div>
-        <Skeleton className="h-96 rounded-xl" />
-      </main>
-    </div>
   )
 }
 
@@ -181,6 +103,9 @@ export default function RepoDetailPage() {
   const [error, setError] = useState('')
   const [prOpen, setPrOpen] = useState(false)
   const [expanded, setExpanded] = useState({})
+  const [certifying, setCertifying] = useState(false)
+  const [certError, setCertError] = useState('')
+  const [certSuccess, setCertSuccess] = useState('')
 
   const toggle = i => setExpanded(p => ({ ...p, [i]: !p[i] }))
 
@@ -188,6 +113,21 @@ export default function RepoDetailPage() {
     const data = await getReport(id)
     setReport(data)
   }, [])
+  
+  const handleCertify = async () => {
+    setCertifying(true)
+    setCertError('')
+    setCertSuccess('')
+    try {
+      const res = await certifyRepo(repoId)
+      setCertSuccess(res.ipfs_hash)
+    } catch (e) {
+      setCertError(e.message || 'Minting failed.')
+    } finally {
+      setCertifying(false)
+      loadReport(repoId)
+    }
+  }
 
   useEffect(() => {
     const init = async () => {
@@ -196,17 +136,33 @@ export default function RepoDetailPage() {
         let url = repoUrl
 
         if (!id) {
+          // Try to find it in either repo list
           const [githubRepos, savedRepos] = await Promise.all([
             getGithubRepos().catch(() => []),
             getRepos().catch(() => []),
           ])
-          const match = [...githubRepos, ...savedRepos].find(r => r.owner === owner && r.repo_name === name)
-          if (!match?.id) {
-            setError('Repository not found. Scan it from Repositories or enable monitoring first.')
-            return
+          const all = [...(Array.isArray(githubRepos) ? githubRepos : []), ...(Array.isArray(savedRepos) ? savedRepos : [])]
+          
+          // Case-insensitive match since owner casing can differ
+          const match = all.find(r =>
+            r.owner?.toLowerCase() === owner?.toLowerCase() &&
+            r.repo_name?.toLowerCase() === name?.toLowerCase()
+          )
+          
+          if (match?.id) {
+            id = match.id
+            url = match.url ?? `https://github.com/${match.owner}/${match.repo_name}`
+          } else {
+            // Construct the URL manually and trigger a save via moderateRepo
+            url = `https://github.com/${owner}/${name}`
+            const mod = await moderateRepo(url, owner, name, false).catch(() => null)
+            if (mod?.repo_id) {
+              id = mod.repo_id
+            } else {
+              setError(`Could not load "${owner}/${name}". Make sure this repo exists and you have access to it.`)
+              return
+            }
           }
-          id = match.id
-          url = match.url
           setRepoId(id)
           setRepoUrl(url)
         } else if (!url) {
@@ -214,7 +170,7 @@ export default function RepoDetailPage() {
             getGithubRepos().catch(() => []),
             getRepos().catch(() => []),
           ])
-          const match = [...githubRepos, ...savedRepos].find(r => String(r.id) === String(id))
+          const match = [...(Array.isArray(githubRepos) ? githubRepos : []), ...(Array.isArray(savedRepos) ? savedRepos : [])].find(r => String(r.id) === String(id))
           if (match) {
             url = match.url
             setRepoUrl(url)
@@ -222,8 +178,8 @@ export default function RepoDetailPage() {
         }
 
         await loadReport(id)
-      } catch {
-        setError('Failed to load vulnerability report.')
+      } catch (e) {
+        setError('Failed to load vulnerability report. Is the backend running?')
       } finally {
         setLoading(false)
       }
@@ -246,6 +202,138 @@ export default function RepoDetailPage() {
       setScanError(e.message || 'Scan failed — check that the backend is running.')
     } finally {
       setScanning(false)
+    }
+  }
+
+  const downloadPdf = async () => {
+    try {
+      const vulns = report?.vulnerabilities ?? []
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+      const pageWidth = doc.internal.pageSize.getWidth()
+
+      // ── Header bar ──────────────────────────────────────────────
+      doc.setFillColor(79, 70, 229)
+      doc.rect(0, 0, pageWidth, 22, 'F')
+      doc.setFontSize(16)
+      doc.setTextColor(255, 255, 255)
+      doc.setFont('helvetica', 'bold')
+      doc.text('RepodoGG  ·  Security Vulnerability Report', 14, 14)
+
+      // ── Meta ────────────────────────────────────────────────────
+      doc.setFontSize(10)
+      doc.setTextColor(60, 60, 80)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Repository: ${owner}/${name}`, 14, 30)
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 36)
+      doc.text(`Scanned by: RepodoGG Intelligence Platform`, 14, 42)
+
+      // ── Summary pills ────────────────────────────────────────────
+      const crit  = vulns.filter(v => v.severity === 'CRITICAL').length
+      const high  = vulns.filter(v => v.severity === 'HIGH').length
+      const med   = vulns.filter(v => v.severity === 'MEDIUM').length
+      const low   = vulns.filter(v => v.severity === 'LOW').length
+
+      const pills = [
+        { label: 'CRITICAL', count: crit,  color: [239, 68,  68]  },
+        { label: 'HIGH',     count: high,  color: [249, 115, 22]  },
+        { label: 'MEDIUM',   count: med,   color: [234, 179, 8]   },
+        { label: 'LOW',      count: low,   color: [34,  197, 94]  },
+        { label: 'TOTAL',    count: vulns.length, color: [79, 70, 229] },
+      ]
+
+      let px = 14
+      pills.forEach(p => {
+        doc.setFillColor(...p.color)
+        doc.roundedRect(px, 48, 44, 12, 2, 2, 'F')
+        doc.setFontSize(7)
+        doc.setTextColor(255, 255, 255)
+        doc.setFont('helvetica', 'bold')
+        doc.text(p.label, px + 22, 52.5, { align: 'center' })
+        doc.setFontSize(11)
+        doc.text(String(p.count), px + 22, 57.5, { align: 'center' })
+        px += 48
+      })
+
+      // ── Vulnerability table ───────────────────────────────────────
+      const tableData = vulns.map((v, idx) => [
+        idx + 1,
+        v.package_name ?? '—',
+        v.installed_version ?? '—',
+        v.severity ?? 'UNKNOWN',
+        v.risk_score != null ? String(v.risk_score) : 'N/A',
+        v.vuln_id ?? '—',
+        v.affected_file ? `${v.affected_file}${v.line_number ? ':' + v.line_number : ''}` : '—',
+        (v.summary ?? 'No summary available.').substring(0, 80),
+        (v.fix_suggestion ?? 'Update to patched version.').substring(0, 80),
+      ])
+
+      const sevColor = sev => {
+        if (sev === 'CRITICAL') return [239, 68,  68]
+        if (sev === 'HIGH')     return [249, 115, 22]
+        if (sev === 'MEDIUM')   return [234, 179, 8]
+        return [34, 197, 94]
+      }
+
+      doc.autoTable({
+        startY: 66,
+        head: [['#', 'Package', 'Version', 'Severity', 'Risk', 'CVE/ID', 'Location', 'Summary', 'Fix Suggestion']],
+        body: tableData,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [79, 70, 229],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 8,
+          cellPadding: 3,
+        },
+        columnStyles: {
+          0: { cellWidth: 8,  halign: 'center' },
+          1: { cellWidth: 28, fontStyle: 'bold' },
+          2: { cellWidth: 22 },
+          3: { cellWidth: 20, halign: 'center' },
+          4: { cellWidth: 14, halign: 'center' },
+          5: { cellWidth: 28 },
+          6: { cellWidth: 28 },
+          7: { cellWidth: 'auto' },
+          8: { cellWidth: 'auto' },
+        },
+        styles: { fontSize: 7.5, cellPadding: 2.5, overflow: 'linebreak' },
+        alternateRowStyles: { fillColor: [248, 248, 255] },
+        didParseCell: (data) => {
+          if (data.column.index === 3 && data.section === 'body') {
+            const sev = data.cell.raw
+            data.cell.styles.textColor = sevColor(sev)
+            data.cell.styles.fontStyle = 'bold'
+          }
+          if (data.column.index === 4 && data.section === 'body') {
+            const score = parseFloat(data.cell.raw)
+            if (!isNaN(score)) {
+              data.cell.styles.textColor = score >= 8 ? [239,68,68] : score >= 5 ? [249,115,22] : [34,197,94]
+              data.cell.styles.fontStyle = 'bold'
+            }
+          }
+        },
+      })
+
+      // ── Footer ───────────────────────────────────────────────────
+      const totalPages = doc.internal.getNumberOfPages()
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p)
+        doc.setFontSize(7)
+        doc.setTextColor(160)
+        doc.setFont('helvetica', 'normal')
+        doc.text(
+          `RepodoGG Security Report  ·  ${owner}/${name}  ·  Page ${p} of ${totalPages}`,
+          pageWidth / 2,
+          doc.internal.pageSize.getHeight() - 6,
+          { align: 'center' }
+        )
+      }
+
+      doc.save(`RepodoGG_${owner}_${name}_SecurityReport.pdf`)
+    } catch (err) {
+      console.error('PDF generation failed:', err)
+      alert(`PDF export failed: ${err.message}`)
     }
   }
 
@@ -320,12 +408,68 @@ export default function RepoDetailPage() {
                 : <><ScanLine className="w-4 h-4" /> {vulns.length === 0 ? 'Run Scan' : 'Re-scan'}</>
               }
             </Button>
+            <Button 
+              variant="outline"
+              onClick={downloadPdf} 
+              className="gap-2 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10" 
+              disabled={vulns.length === 0}
+            >
+              <FileDown className="w-4 h-4" />
+              Export PDF
+            </Button>
+            {vulns.length === 0 && !neverScanned && (
+              <Button 
+                onClick={handleCertify} 
+                disabled={certifying || !!report?.repo?.ipfs_hash || !!certSuccess}
+                className={`gap-2 ${report?.repo?.ipfs_hash || certSuccess ? 'bg-amber-500/20 text-amber-500 border border-amber-500 hover:bg-amber-500/30' : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600'} text-white border-0 shadow-lg`}
+              >
+                <Award className="w-4 h-4" />
+                {certifying ? 'Minting...' : (report?.repo?.ipfs_hash || certSuccess ? 'Certified' : 'Mint Certificate')}
+              </Button>
+            )}
             <Button onClick={() => setPrOpen(true)} className="gap-2" disabled={vulns.length === 0}>
               <GitPullRequest className="w-4 h-4" />
               Fix PR
             </Button>
           </div>
         </div>
+
+        {/* IPFS Cert Success */}
+        {(certSuccess || report?.repo?.ipfs_hash) && (
+          <div className="p-4 rounded-xl border border-amber-500/40 bg-gradient-to-r from-amber-500/10 to-transparent flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-500/20 rounded-full">
+                <Award className="w-6 h-6 text-amber-500" />
+              </div>
+              <div>
+                <p className="font-bold text-amber-500 flex items-center gap-2">
+                  Verified Immutable Certificate
+                  <span className="px-2 py-0.5 text-[10px] uppercase font-bold tracking-wider bg-amber-500 text-white rounded-full">IPFS Minted</span>
+                </p>
+                <p className="text-muted-foreground text-xs mt-1 font-mono">
+                  IPFS Hash: <span className="text-foreground">{certSuccess || report?.repo?.ipfs_hash}</span>
+                </p>
+              </div>
+            </div>
+            <a 
+              href={`http://localhost:8000/repos/${repoId}/certificate.pdf?token=${localStorage.getItem('token')}`} 
+              target="_blank" 
+              rel="noreferrer"
+            >
+              <Button variant="outline" className="gap-2 border-amber-500/30 text-amber-500 hover:bg-amber-500/10">
+                <ExternalLink className="w-4 h-4" /> View Certificate
+              </Button>
+            </a>
+          </div>
+        )}
+        
+        {/* Cert Error */}
+        {certError && (
+          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            {certError}
+          </div>
+        )}
 
         {/* Scan error */}
         {scanError && (

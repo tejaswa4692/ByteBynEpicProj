@@ -60,6 +60,13 @@ def get_repo_by_name(user_id, repo_name):
     res = sb.table("hx_repositories").select("*").eq("user_id", user_id).eq("repo_name", repo_name).limit(1).execute()
     return res.data[0] if res.data else None
 
+def set_repo_ipfs_hash(repo_id, ipfs_hash, cert_pdf: bytes = None):
+    data = {"ipfs_hash": ipfs_hash}
+    if cert_pdf is not None:
+        import base64
+        data["cert_pdf"] = base64.b64encode(cert_pdf).decode()
+    sb.table("hx_repositories").update(data).eq("id", repo_id).execute()
+
 def get_repo_report(repo_id, user_id):
     repo_res = sb.table("hx_repositories").select("*").eq("id", repo_id).eq("user_id", user_id).limit(1).execute()
     if not repo_res.data:
