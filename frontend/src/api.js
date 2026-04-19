@@ -9,3 +9,4 @@ export const getRepos     = ()   => fetch(`${API}/repos`,               { header
 export const getReport    = id   => fetch(`${API}/repos/${id}/report`,  { headers: auth() }).then(json)
 export const getCves      = sev  => fetch(`${API}/cves${sev ? `?severity=${sev}` : ''}`, { headers: auth() }).then(json)
 export const refreshCves  = ()   => fetch(`${API}/cves/refresh`,        { method: 'POST', headers: auth() }).then(json)
+export const emailReport  = (id, email) => fetch(`${API}/repos/${id}/email`, { method: 'POST', headers: auth(), body: JSON.stringify({ recipient_email: email }) }).then(json)

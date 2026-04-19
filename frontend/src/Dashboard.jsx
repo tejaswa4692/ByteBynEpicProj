@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { scanRepo, getRepos, getReport, getCves, refreshCves } from './api'
+import { scanRepo, getRepos, getReport, getCves, refreshCves, emailReport } from './api'
 
 const badge = sev => {
   const styles = { CRITICAL: 'bg-red-900 text-red-300', HIGH: 'bg-orange-900 text-orange-300', MEDIUM: 'bg-yellow-900 text-yellow-300', LOW: 'bg-blue-900 text-blue-300' }
@@ -141,7 +141,25 @@ function Repos() {
           <div className="bg-gray-900 rounded-2xl w-full max-w-3xl max-h-[80vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-semibold">Report: {report.name}</h3>
-              <button onClick={() => setReport(null)} className="text-gray-400 hover:text-white text-2xl">✕</button>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={async () => {
+                    const em = prompt("Enter the email address to send this PDF report to:");
+                    if (em) {
+                      try {
+                        const res = await emailReport(report.repo.id || report.id, em);
+                        if (res.success) alert(res.message);
+                        else alert(`❌ Error: ${res.detail}`);
+                      } catch(e) {
+                         alert("Failed to send email.");
+                      }
+                    }
+                  }} 
+                  className="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-semibold">
+                  📧 Email PDF Report
+                </button>
+                <button onClick={() => setReport(null)} className="text-gray-400 hover:text-white text-2xl">✕</button>
+              </div>
             </div>
             <p className="text-gray-400 mb-4">{report.total_vulns} vulnerabilities</p>
             <VulnTable rows={report.vulnerabilities} />
