@@ -41,9 +41,13 @@ def upsert_user_github(github_id, username, github_token, avatar_url=None, email
 
 # ── repositories ──────────────────────────────────────────────────────────────
 
-def upsert_repo(user_id, url, owner, repo_name, is_moderated=True):
+def upsert_repo(user_id, url, owner, repo_name, is_moderated=True, scan_path=""):
+    data = {"user_id": user_id, "url": url, "owner": owner, "repo_name": repo_name, "is_moderated": is_moderated, "scanned_at": "now()"}
+    if scan_path is not None:
+        data["scan_path"] = scan_path
+        
     res = sb.table("repositories").upsert(
-        {"user_id": user_id, "url": url, "owner": owner, "repo_name": repo_name, "is_moderated": is_moderated, "scanned_at": "now()"},
+        data,
         on_conflict="user_id,url"
     ).execute()
     return res.data[0]["id"]

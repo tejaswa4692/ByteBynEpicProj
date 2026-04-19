@@ -13,7 +13,7 @@ SEVERITY_CVSS   = {"CRITICAL": 9.5, "HIGH": 7.5, "MEDIUM": 5.0, "LOW": 2.5}
 
 # ── GitHub repo ────────────────────────────────────────────────────────────────
 
-def get_deps(repo_url):
+def get_deps(repo_url, target_path=""):
     parts = repo_url.strip("/").split("/")
     owner, repo = parts[3], parts[4]
 
@@ -36,6 +36,10 @@ def get_deps(repo_url):
         # Find all package.json files not in node_modules
         pkg_paths = [item["path"] for item in tree if item["path"].endswith("package.json") and "node_modules" not in item["path"]]
         
+        if target_path and target_path != "/" and target_path != "":
+            tp = target_path.strip("/")
+            pkg_paths = [p for p in pkg_paths if p.startswith(tp + "/") or p == f"{tp}/package.json" or p == tp]
+            
         for path in pkg_paths:
             raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
             r_pkg = requests.get(raw_url, timeout=10)
@@ -151,10 +155,80 @@ def risk_score(cvss, severity, installed, affected):
     return round(min(base * mult, 10.0), 2)
 
 
+import re
+import zipfile
+import io
+
 # ── full scan ──────────────────────────────────────────────────────────────────
 
-def scan_repo(repo_url):
-    deps, owner, repo_name = get_deps(repo_url)
+def enrich_with_codebase_analysis(owner, repo, branch, base_path, hits):
+    if not hits:
+        return hits
+
+    url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+    js_files = {}
+    try:
+        res = requests.get(url, timeout=15)
+        res.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(res.content)) as z:
+            for name in z.namelist():
+                if name.endswith((".js", ".jsx", ".ts", ".tsx")):
+                    js_files[name] = z.read(name).decode("utf-8", errors="ignore").splitlines()
+    except Exception as e:
+        print(f"Failed to download zip for analysis: {e}")
+        pass
+
+    for h in hits:
+        pkg = h["package_name"]
+        summary = (h.get("summary") or "").lower()
+        
+        if "prototype pollution" in summary:
+            h["fix_suggestion"] = f"Remove deep merges using {pkg} or upgrade to a safe version."
+            h["risk_impact"] = "High (Prototype Pollution)"
+        elif "xss" in summary or "cross-site scripting" in summary:
+            h["fix_suggestion"] = f"Sanitize user input before passing to {pkg} or upgrade."
+            h["risk_impact"] = "Critical (XSS)"
+        elif "redos" in summary or "regular expression" in summary:
+            h["fix_suggestion"] = f"Implement request timeouts or upgrade {pkg} to avoid ReDoS."
+            h["risk_impact"] = "Medium (Denial of Service)"
+        else:
+            h["fix_suggestion"] = f"Upgrade {pkg} to the latest patched version."
+            h["risk_impact"] = "Moderate"
+
+        h["affected_file"] = None
+        h["line_number"] = None
+
+        pattern = re.compile(rf"['\"]{re.escape(pkg)}['\"]")
+        
+        found = False
+        for name, lines in js_files.items():
+            if found: break
+            parts = name.split("/", 1)
+            if len(parts) > 1:
+                rel_path = parts[1]
+                if base_path and not rel_path.startswith(base_path.strip("/") + "/"):
+                    continue
+                
+                for idx, line in enumerate(lines):
+                    if ("import " in line or "require(" in line) and pattern.search(line):
+                        h["affected_file"] = rel_path
+                        h["line_number"] = idx + 1
+                        found = True
+                        break
+
+    return hits
+
+def scan_repo(repo_url, target_path=""):
+    deps, owner, repo_name = get_deps(repo_url, target_path)
+    
+    # Try to find branch name for zip download
+    branch = "main"
+    headers = {}
+    if GITHUB_TOKEN: headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    r_repo = requests.get(f"https://api.github.com/repos/{owner}/{repo_name}", headers=headers, timeout=10)
+    if r_repo.status_code == 200:
+        branch = r_repo.json().get("default_branch", "main")
+
     hits = []
 
     for pkg_name, version in deps.items():
@@ -175,6 +249,16 @@ def scan_repo(repo_url):
             if score is None:
                 continue
 
+            fixed_version = None
+            for entry in vuln.get("affected", []):
+                for r in entry.get("ranges", []):
+                    for event in r.get("events", []):
+                        if "fixed" in event:
+                            fixed_version = event["fixed"]
+                            break
+                    if fixed_version: break
+                if fixed_version: break
+
             hits.append({
                 "package_name":      pkg_name,
                 "installed_version": version,
@@ -183,7 +267,9 @@ def scan_repo(repo_url):
                 "cvss":              cvss,
                 "risk_score":        score,
                 "summary":           vuln.get("summary"),
+                "fixed_version":     fixed_version
             })
 
     hits.sort(key=lambda h: h["risk_score"], reverse=True)
+    hits = enrich_with_codebase_analysis(owner, repo_name, branch, target_path, hits)
     return hits, owner, repo_name, len(deps)

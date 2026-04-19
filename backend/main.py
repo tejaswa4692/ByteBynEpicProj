@@ -187,6 +187,7 @@ def list_github_repos(user: dict = Depends(get_current_user)):
             "owner": gr["owner"]["login"],
             "url": gr["html_url"],
             "is_moderated": is_moderated,
+            "scan_path": db_repo.get("scan_path", "") if db_repo else "",
             "updated_at": gr["updated_at"],
             "language": gr.get("language")
         })
@@ -197,16 +198,17 @@ class ModerateRequest(BaseModel):
     repo_url: str
     owner: str
     repo_name: str
+    scan_path: str = ""
 
 @app.post("/repos/moderate")
 def moderate_repo(body: ModerateRequest, background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
     user_id = int(user["sub"])
-    repo_id = upsert_repo(user_id, body.repo_url, body.owner, body.repo_name, is_moderated=body.is_moderated)
+    repo_id = upsert_repo(user_id, body.repo_url, body.owner, body.repo_name, is_moderated=body.is_moderated, scan_path=body.scan_path)
     
     if body.is_moderated:
         def scan_and_alert():
             try:
-                results, _, repo_name, _ = scan_repo(body.repo_url)
+                results, _, repo_name, _ = scan_repo(body.repo_url, target_path=body.scan_path)
                 save_scan_results(repo_id, results)
                 if results:
                     db_user = get_user(user_id)
@@ -253,22 +255,29 @@ def background_scan_repo(repo_url: str):
     if not repos:
         return
 
-    # Perform the scan once
-    try:
-        results, _, repo_name, _ = scan_repo(repo_url)
-    except Exception as e:
-        print(f"Background scan failed for {repo_url}: {e}")
-        return
-
-    # Save results for all tracking instances and send emails
-    emailed_users = set()
+    # Group repos by scan_path
+    path_groups = {}
     for repo in repos:
-        save_scan_results(repo["id"], results)
-        if results and repo["user_id"] not in emailed_users:
-            user = get_user(repo["user_id"])
-            if user and user.get("email"):
-                send_alert_email(user["email"], repo_name, results)
-                emailed_users.add(repo["user_id"])
+        path = repo.get("scan_path", "") or ""
+        if path not in path_groups:
+            path_groups[path] = []
+        path_groups[path].append(repo)
+
+    emailed_users = set()
+    for path, group_repos in path_groups.items():
+        try:
+            results, _, repo_name, _ = scan_repo(repo_url, target_path=path)
+        except Exception as e:
+            print(f"Background scan failed for {repo_url} at path '{path}': {e}")
+            continue
+
+        for repo in group_repos:
+            save_scan_results(repo["id"], results)
+            if results and repo["user_id"] not in emailed_users:
+                user = get_user(repo["user_id"])
+                if user and user.get("email"):
+                    send_alert_email(user["email"], repo_name, results)
+                    emailed_users.add(repo["user_id"])
 
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
