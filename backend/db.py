@@ -9,18 +9,18 @@ sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 # ── users ──────────────────────────────────────────────────────────────────────
 
 def get_user(user_id):
-    res = sb.table("users").select("*").eq("id", user_id).limit(1).execute()
+    res = sb.table("hx_users").select("*").eq("id", user_id).limit(1).execute()
     return res.data[0] if res.data else None
 
 def get_user_by_github(github_id):
-    res = sb.table("users").select("*").eq("github_id", github_id).limit(1).execute()
+    res = sb.table("hx_users").select("*").eq("github_id", github_id).limit(1).execute()
     return res.data[0] if res.data else None
 
 def upsert_user_github(github_id, username, github_token, avatar_url=None, email=None):
     # Try to find existing
     existing = get_user_by_github(github_id)
     if existing:
-        res = sb.table("users").update({
+        res = sb.table("hx_users").update({
             "username": username,
             "github_token": github_token,
             "avatar_url": avatar_url,
@@ -28,7 +28,7 @@ def upsert_user_github(github_id, username, github_token, avatar_url=None, email
         }).eq("id", existing["id"]).execute()
         return existing["id"]
     else:
-        res = sb.table("users").insert({
+        res = sb.table("hx_users").insert({
             "github_id": github_id,
             "username": username,
             "github_token": github_token,
@@ -42,55 +42,55 @@ def upsert_user_github(github_id, username, github_token, avatar_url=None, email
 # ── repositories ──────────────────────────────────────────────────────────────
 
 def upsert_repo(user_id, url, owner, repo_name, is_moderated=True):
-    res = sb.table("repositories").upsert(
+    res = sb.table("hx_repositories").upsert(
         {"user_id": user_id, "url": url, "owner": owner, "repo_name": repo_name, "is_moderated": is_moderated, "scanned_at": "now()"},
         on_conflict="user_id,url"
     ).execute()
     return res.data[0]["id"]
 
 def set_repo_moderation(repo_id, user_id, is_moderated):
-    res = sb.table("repositories").update({"is_moderated": is_moderated}).eq("id", repo_id).eq("user_id", user_id).execute()
+    res = sb.table("hx_repositories").update({"is_moderated": is_moderated}).eq("id", repo_id).eq("user_id", user_id).execute()
     return res.data[0] if res.data else None
 
 def get_repos(user_id):
-    res = sb.table("repositories").select("*").eq("user_id", user_id).order("scanned_at", desc=True).execute()
+    res = sb.table("hx_repositories").select("*").eq("user_id", user_id).order("scanned_at", desc=True).execute()
     return res.data
 
 def get_repo_by_name(user_id, repo_name):
-    res = sb.table("repositories").select("*").eq("user_id", user_id).eq("repo_name", repo_name).limit(1).execute()
+    res = sb.table("hx_repositories").select("*").eq("user_id", user_id).eq("repo_name", repo_name).limit(1).execute()
     return res.data[0] if res.data else None
 
 def get_repo_report(repo_id, user_id):
-    repo_res = sb.table("repositories").select("*").eq("id", repo_id).eq("user_id", user_id).limit(1).execute()
+    repo_res = sb.table("hx_repositories").select("*").eq("id", repo_id).eq("user_id", user_id).limit(1).execute()
     if not repo_res.data:
         return None, []
-    results_res = sb.table("scan_results").select("*").eq("repo_id", repo_id).order("risk_score", desc=True).execute()
+    results_res = sb.table("hx_scan_results").select("*").eq("repo_id", repo_id).order("risk_score", desc=True).execute()
     return repo_res.data[0], results_res.data
 
 
 def get_repos_by_url(url):
-    res = sb.table("repositories").select("*").eq("url", url).execute()
+    res = sb.table("hx_repositories").select("*").eq("url", url).execute()
     return res.data
 
 
 # ── scan results ──────────────────────────────────────────────────────────────
 
 def save_scan_results(repo_id, results):
-    sb.table("scan_results").delete().eq("repo_id", repo_id).execute()
+    sb.table("hx_scan_results").delete().eq("repo_id", repo_id).execute()
     if results:
         rows = [{**r, "repo_id": repo_id} for r in results]
-        sb.table("scan_results").insert(rows).execute()
+        sb.table("hx_scan_results").insert(rows).execute()
 
 
 # ── cve cache ─────────────────────────────────────────────────────────────────
 
 def upsert_cves(cves):
     if cves:
-        sb.table("cve_cache").upsert(cves, on_conflict="ghsa_id").execute()
+        sb.table("hx_cve_cache").upsert(cves, on_conflict="ghsa_id").execute()
 
 
 def get_all_cves(severity=None):
-    q = sb.table("cve_cache").select("*").order("fetched_at", desc=True)
+    q = sb.table("hx_cve_cache").select("*").order("fetched_at", desc=True)
     if severity:
         q = q.eq("severity", severity.upper())
     return q.execute().data

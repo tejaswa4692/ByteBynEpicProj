@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useLocation, Link } from 'react-router-dom'
 import { getGithubRepos, getReport, getRepos, scanRepo } from '@/api'
 import NavBar from '@/components/NavBar'
@@ -180,6 +180,9 @@ export default function RepoDetailPage() {
   const [scanError, setScanError] = useState('')
   const [error, setError] = useState('')
   const [prOpen, setPrOpen] = useState(false)
+  const [expanded, setExpanded] = useState({})
+
+  const toggle = i => setExpanded(p => ({ ...p, [i]: !p[i] }))
 
   const loadReport = useCallback(async (id) => {
     const data = await getReport(id)
@@ -489,62 +492,98 @@ export default function RepoDetailPage() {
                         <TableHead>CVE / ID</TableHead>
                         <TableHead>Severity</TableHead>
                         <TableHead>Risk</TableHead>
-                        <TableHead className="max-w-xs">Summary / Fix</TableHead>
+                        <TableHead className="max-w-xs">Summary</TableHead>
                         <TableHead>Source</TableHead>
-                        <TableHead className="pr-6">Advisory</TableHead>
+                        <TableHead>Advisory</TableHead>
+                        <TableHead className="pr-6 text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {vulns.map((v, i) => (
-                        <TableRow key={i}>
-                          <TableCell className="pl-6 font-mono text-xs text-blue-300 font-medium">
-                            {v.package_name}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {v.installed_version}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-foreground/80">
-                            {v.vuln_id || '—'}
-                          </TableCell>
-                          <TableCell>
-                            <SeverityBadge severity={v.severity} />
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2 min-w-[80px]">
-                              <Progress value={(v.risk_score / 10) * 100} className="h-1.5 w-14" />
-                              <span className={`text-xs font-bold tabular-nums ${riskColor(v.risk_score)}`}>
-                                {v.risk_score}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-xs max-w-xs">
-                            <p className="text-muted-foreground line-clamp-1">{v.summary || '—'}</p>
-                            {v.fix_suggestion && (
-                              <p className="text-green-400 mt-0.5 line-clamp-1">↳ {v.fix_suggestion}</p>
-                            )}
-                            {v.affected_file && (
-                              <p className="font-mono text-yellow-400 text-[10px] mt-0.5">
-                                {v.affected_file}{v.line_number ? `:${v.line_number}` : ''}
-                              </p>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {inferManifest(v) ? (
-                              <span className="font-mono text-muted-foreground text-[10px]">
-                                {inferManifest(v)}
-                              </span>
-                            ) : <span className="text-muted-foreground">—</span>}
-                          </TableCell>
-                          <TableCell className="pr-6">
-                            {v.vuln_id ? (
-                              <a href={`https://github.com/advisories/${v.vuln_id}`} target="_blank" rel="noreferrer">
-                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                </Button>
-                              </a>
-                            ) : <span className="text-muted-foreground text-xs">—</span>}
-                          </TableCell>
-                        </TableRow>
+                        <React.Fragment key={i}>
+                          <TableRow className="cursor-pointer hover:bg-muted/50 transition-colors border-b border-border" onClick={() => toggle(i)}>
+                            <TableCell className="pl-6 font-mono text-xs text-blue-300 font-medium">
+                              {v.package_name}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs text-muted-foreground">
+                              {v.installed_version}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs text-foreground/80">
+                              {v.vuln_id || '—'}
+                            </TableCell>
+                            <TableCell>
+                              <SeverityBadge severity={v.severity} />
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2 min-w-[80px]">
+                                <Progress value={(v.risk_score / 10) * 100} className="h-1.5 w-14" />
+                                <span className={`text-xs font-bold tabular-nums ${riskColor(v.risk_score)}`}>
+                                  {v.risk_score}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-xs max-w-xs">
+                              <p className="text-muted-foreground line-clamp-1">{v.summary || '—'}</p>
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {inferManifest(v) ? (
+                                <span className="font-mono text-muted-foreground text-[10px]">
+                                  {inferManifest(v)}
+                                </span>
+                              ) : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                            <TableCell>
+                              {v.vuln_id ? (
+                                <a href={`https://github.com/advisories/${v.vuln_id}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </Button>
+                                </a>
+                              ) : <span className="text-muted-foreground text-xs">—</span>}
+                            </TableCell>
+                            <TableCell className="pr-6 text-right text-primary font-medium text-xs">
+                              {expanded[i] ? 'Hide' : 'Analyze'}
+                            </TableCell>
+                          </TableRow>
+                          {expanded[i] && (
+                            <TableRow className="bg-muted/30 hover:bg-muted/30">
+                              <TableCell colSpan={9} className="p-6">
+                                <div className="flex flex-col gap-3">
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                      <p className="text-muted-foreground text-[10px] uppercase tracking-wider font-semibold mb-1">Vulnerability Summary</p>
+                                      <p className="text-sm font-medium leading-relaxed">{v.summary || 'No summary available.'}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-muted-foreground text-[10px] uppercase tracking-wider font-semibold mb-1">Local Usage Detail</p>
+                                      <p className="text-sm font-medium">
+                                        {v.affected_file ? (
+                                          <span className="font-mono text-yellow-500 bg-yellow-500/10 px-1.5 py-0.5 rounded border border-yellow-500/20">
+                                            {v.affected_file}:{v.line_number}
+                                          </span>
+                                        ) : (
+                                          <span className="text-muted-foreground italic">Not uniquely identified in AST</span>
+                                        )}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-2 p-4 bg-primary/10 rounded-xl border border-primary/20 shadow-inner">
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="text-primary font-semibold text-sm flex items-center gap-1.5">
+                                        🛠️ Actionable Fix
+                                      </span>
+                                      <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-background border border-border text-foreground/80 ml-auto">
+                                        Impact: <span className="text-destructive ml-1">{v.risk_impact || 'Moderate Issue'}</span>
+                                      </span>
+                                    </div>
+                                    <p className="text-sm text-foreground/90 font-medium">{v.fix_suggestion || 'Update to the nearest safe patched version.'}</p>
+                                  </div>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </React.Fragment>
                       ))}
                     </TableBody>
                   </Table>

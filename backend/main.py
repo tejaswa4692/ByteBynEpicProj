@@ -138,7 +138,13 @@ def scan(body: ScanRequest, user: dict = Depends(get_current_user)):
         raise HTTPException(400, detail=str(e))
 
     repo_id = upsert_repo(int(user["sub"]), body.repo_url, owner, repo_name)
-    save_scan_results(repo_id, results)
+    try:
+        save_scan_results(repo_id, results)
+    except Exception as e:
+        err_str = str(e)
+        if 'source_manifest' in err_str or 'PGRST204' in err_str:
+            raise HTTPException(500, detail="Database schema out of date! Please go to Supabase SQL editor and run the 'alter table' commands from setup.sql (including source_manifest). Then run 'NOTIFY pgrst, reload_schema;'.")
+        raise HTTPException(500, detail=f"Database error during save: {err_str}")
     return {
         "repo_id": repo_id,
         "repo_url": body.repo_url,
