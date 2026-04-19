@@ -133,7 +133,7 @@ class ScanRequest(BaseModel):
 @app.post("/scan")
 def scan(body: ScanRequest, user: dict = Depends(get_current_user)):
     try:
-        results, owner, repo_name, dep_count = scan_repo(body.repo_url)
+        results, owner, repo_name, dep_count, manifests = scan_repo(body.repo_url)
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
 
@@ -144,6 +144,7 @@ def scan(body: ScanRequest, user: dict = Depends(get_current_user)):
         "repo_url": body.repo_url,
         "dependencies_scanned": dep_count,
         "vulnerabilities_found": len(results),
+        "manifests": manifests,
         "results": results,
     }
 
@@ -206,7 +207,7 @@ def moderate_repo(body: ModerateRequest, background_tasks: BackgroundTasks, user
     if body.is_moderated:
         def scan_and_alert():
             try:
-                results, _, repo_name, _ = scan_repo(body.repo_url)
+                results, _, repo_name, _, _ = scan_repo(body.repo_url)
                 save_scan_results(repo_id, results)
                 if results:
                     db_user = get_user(user_id)
@@ -255,7 +256,7 @@ def background_scan_repo(repo_url: str):
 
     # Perform the scan once
     try:
-        results, _, repo_name, _ = scan_repo(repo_url)
+        results, _, repo_name, _, _ = scan_repo(repo_url)
     except Exception as e:
         print(f"Background scan failed for {repo_url}: {e}")
         return

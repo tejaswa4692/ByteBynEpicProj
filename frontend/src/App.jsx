@@ -1,21 +1,22 @@
-import { useState } from 'react'
-import Login from './Login'
-import Dashboard from './Dashboard'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import LoginPage from './pages/LoginPage'
+import ReposPage from './pages/ReposPage'
+import RepoDetailPage from './pages/RepoDetailPage'
+import CertifyPage from './pages/CertifyPage'
+import ProtectedRoute from './components/ProtectedRoute'
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem('token'))
-
-  const onLogin = (tok, user, avatar) => {
-    localStorage.setItem('token', tok)
-    localStorage.setItem('username', user)
-    if (avatar) localStorage.setItem('avatar_url', avatar)
-    setToken(tok)
-  }
-
-  const onLogout = () => {
-    localStorage.clear()
-    setToken(null)
-  }
-
-  return token ? <Dashboard onLogout={onLogout} /> : <Login onLogin={onLogin} />
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route element={<ProtectedRoute />}>
+          <Route path="/repos" element={<ReposPage />} />
+          <Route path="/repos/:owner/:name" element={<RepoDetailPage />} />
+          <Route path="/certify" element={<CertifyPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  )
 }

@@ -27,18 +27,11 @@ create table if not exists scan_results (
     cvss              float,
     risk_score        float,
     summary           text,
-    source_manifest   text,
     affected_file     text,
     line_number       int,
     fix_suggestion    text,
     risk_impact       text
 );
-
-alter table scan_results add column if not exists source_manifest text;
-alter table scan_results add column if not exists affected_file text;
-alter table scan_results add column if not exists line_number int;
-alter table scan_results add column if not exists fix_suggestion text;
-alter table scan_results add column if not exists risk_impact text;
 
 create table if not exists cve_cache (
     id           bigserial primary key,
